@@ -1,0 +1,194 @@
+# AI Code Review Workflow
+# Uses AI chatbot to review code changes in PRs
+# and posts review results as PR comments
+
+name: AI Code Review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    # Can limit to specific file types only
+    paths:
+      - '**.py'
+      - '**.go'
+      - '**.js'
+      - '**.ts'
+      - '**.java'
+      - '**.cpp'
+      - '**.c'
+      - '**.h'
+
+jobs:
+  code-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # Required for writing PR comments
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Get full history for comparing changes
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        env:
+          AI_TOKEN: ${{ secrets.AI_TOKEN }}
+          AI_COOKIES: ${{ secrets.AI_COOKIES }}
+        run: |
+          pip install requests urllib3
+
+      - name: Make review script executable
+        run: |
+          chmod +x scripts/ai_code_reviewer.py
+
+      - name: Check if prompt file exists
+        run: |
+          if [[ -f "prompt.md" ]]; then
+            echo "✅ Found custom prompt file: prompt.md"
+            echo "📄 Prompt file preview:"
+            head -n 5 prompt.md
+            echo "..."
+          else
+            echo "ℹ️ No prompt.md file found, will use default review prompt"
+          fi
+
+      - name: Get changed files
+        id: changed-files
+        run: |
+          # Get files changed in PR
+          git diff --name-only origin/${{ github.base_ref }}..HEAD > changed_files.txt
+          echo "Found changed files:"
+          cat changed_files.txt
+
+      - name: Review changed files
+        id: review
+        env:
+          AI_TOKEN: ${{ secrets.AI_TOKEN }}
+          AI_COOKIES: ${{ secrets.AI_COOKIES }}
+        run: |
+          echo "# 🤖 AI Code Review Report" > review_report.md
+          echo "" >> review_report.md
+          echo "**Review Time:** $(date '+%Y-%m-%d %H:%M:%S UTC')" >> review_report.md
+          echo "**PR:** #${{ github.event.number }}" >> review_report.md
+          echo "" >> review_report.md
+          
+          # Process each changed file
+          while IFS= read -r file; do
+            # Only process code files
+            if [[ "$file" =~ \.(py|go|js|ts|java|cpp|c|h|rb|php|cs|swift|kt)$ ]]; then
+              echo "📂 Reviewing file: $file"
+              
+              # Get file changes
+              if git diff --unified=3 origin/${{ github.base_ref }}..HEAD -- "$file" > /dev/null 2>&1; then
+                changes=$(git diff --unified=3 origin/${{ github.base_ref }}..HEAD -- "$file")
+                
+                if [[ -n "$changes" ]]; then
+                  echo "" >> review_report.md
+                  echo "## 📝 \`$file\`" >> review_report.md
+                  echo "" >> review_report.md
+                  
+                  # Call AI review with prompt.md file
+                  review_result=$(python scripts/ai_code_reviewer.py "$file" "$changes" --prompt-file prompt.md 2>&1)
+                  
+                  if [[ $? -eq 0 ]] && [[ -n "$review_result" ]]; then
+                    echo "$review_result" >> review_report.md
+                  else
+                    echo "⚠️ Unable to complete review for this file" >> review_report.md
+                  fi
+                  
+                  echo "" >> review_report.md
+                  echo "---" >> review_report.md
+                fi
+              fi
+            fi
+          done < changed_files.txt
+          
+          # If no reviewable files found
+          if ! grep -q "## 📝" review_report.md; then
+            echo "" >> review_report.md
+            echo "ℹ️ No reviewable code files found in this PR." >> review_report.md
+          fi
+          
+          echo "Review report generated:"
+          cat review_report.md
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            // Read review report
+            const reviewReport = fs.readFileSync('review_report.md', 'utf8');
+            
+            // Check if there's already a bot comment
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const botComment = comments.data.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('🤖 AI Code Review Report')
+            );
+            
+            if (botComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: reviewReport
+              });
+              console.log('Updated existing review comment');
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: reviewReport
+              });
+              console.log('Created new review comment');
+            }
+
+      - name: Upload review report
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: code-review-report
+          path: review_report.md
+          retention-days: 30
+
+# ==================== Setup Instructions ====================
+#
+# 🔧 Required Repository Secrets:
+# - AI_TOKEN: Your AI service authentication token
+# - AI_COOKIES: Your AI service cookies (if needed)
+#
+# 🎯 Features:
+# - ✅ Only triggers on PR events
+# - ✅ Only reviews code files (customizable file extensions)
+# - ✅ Gets specific file change content
+# - ✅ Uses AI for professional code review
+# - ✅ Posts results as PR comments
+# - ✅ Auto-updates existing comments (prevents spam)
+# - ✅ Saves review reports as artifacts
+#
+# 🚀 Usage:
+# 1. Create scripts/ai_code_reviewer.py script
+# 2. (Optional) Create prompt.md file to define review standards
+# 3. Save this file as .github/workflows/code-review.yml
+# 4. Set AI_TOKEN and AI_COOKIES in Repository Settings > Secrets
+# 5. Create PR to automatically trigger review
+#
+# ⚙️ Customization Options:
+# - Modify paths to limit triggering file types
+# - Adjust review prompt language and requirements
+# - Modify AI model or API endpoint
