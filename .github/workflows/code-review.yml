@@ -11,6 +11,7 @@ on:
 jobs:
   code-review:
     runs-on: ubuntu-latest
+    environment: DEV
     permissions:
       contents: read
       pull-requests: write
@@ -32,17 +33,17 @@ jobs:
 
       - name: Verify script path and make executable
         run: |
-          # 首先檢查 scripts 目錄中的腳本
+          # First check for script in scripts directory
           if [ -f "scripts/ai_code_reviewer.py" ]; then
             chmod +x scripts/ai_code_reviewer.py
             echo "Script found at scripts/ai_code_reviewer.py"
             SCRIPT_PATH="scripts/ai_code_reviewer.py"
-          # 然後檢查根目錄中的腳本
+          # Then check in root directory
           elif [ -f "ai_code_reviewer.py" ]; then
             chmod +x ai_code_reviewer.py
             echo "Script found at ai_code_reviewer.py"
             SCRIPT_PATH="ai_code_reviewer.py"
-          # 最後檢查其他可能的位置
+          # Finally check other possible locations
           else
             SCRIPT_PATH=$(find . -name "ai_code_reviewer.py" | head -n 1)
             if [ -n "$SCRIPT_PATH" ]; then
@@ -69,26 +70,26 @@ jobs:
       - name: Get changed files
         id: changed-files
         run: |
-          # Act 環境中可能無法使用 git diff 命令，所以添加更強健的回退機制
+          # In Act environment, git diff command may not be available, so add robust fallback mechanisms
           mkdir -p .act_temp
           
-          # 嘗試使用 git diff
+          # Try using git diff
           if git diff --name-only master..HEAD > .act_temp/changed_files.txt 2>/dev/null; then
             echo "Git diff successful"
-          # 嘗試使用 git diff 與其他可能的基準分支
+          # Try using git diff with other possible base branches
           elif git diff --name-only origin/master..HEAD > .act_temp/changed_files.txt 2>/dev/null; then
             echo "Git diff with origin/master successful"
           elif git diff --name-only main..HEAD > .act_temp/changed_files.txt 2>/dev/null; then
             echo "Git diff with main successful"
           elif git diff --name-only origin/main..HEAD > .act_temp/changed_files.txt 2>/dev/null; then
             echo "Git diff with origin/main successful"
-          # 回退到列出所有測試文件
+          # Fall back to listing all test files
           else
             echo "Using fallback: listing all test files"
             find . -name "*test*.py" -o -name "test_*.py" -type f > .act_temp/changed_files.txt
           fi
           
-          # 如果沒有找到任何文件，至少包含一個測試文件以便於測試
+          # If no files are found, include at least one test file for testing
           if [ ! -s .act_temp/changed_files.txt ]; then
             echo "No files found, adding test_calculator.py as fallback"
             echo "tests/test_calculator.py" > .act_temp/changed_files.txt
@@ -100,32 +101,32 @@ jobs:
       - name: Review changed files
         id: review
         env:
-          # Act 使用 .env 或命令行設置的環境變數
-          # 如果您使用 -s 標誌提供了密鑰，它們應該可用
+          # Act uses environment variables set via .env or command line
+          # If you provide keys using the -s flag, they should be available
           AI_TOKEN: ${{ secrets.AI_TOKEN }}
           AI_COOKIES: ${{ secrets.AI_COOKIES }}
         run: |
-          # 創建輸出目錄
+          # Create output directory
           mkdir -p .act_temp/reports
           
           echo "# 🤖 AI Code Review Report" > review_report.md
           echo "**Review Time:** $(date '+%Y-%m-%d %H:%M:%S')" >> review_report.md
           echo "" >> review_report.md
           
-          # 添加 Act 調試信息
-          echo "## 環境信息" >> review_report.md
-          echo "- 運行環境: Act 本地模擬" >> review_report.md
-          echo "- 工作目錄: $(pwd)" >> review_report.md
-          echo "- 腳本路徑: $SCRIPT_PATH" >> review_report.md
-          echo "- Python 版本: $(python --version)" >> review_report.md
+          # Add Act debug information
+          echo "## Environment Information" >> review_report.md
+          echo "- Running Environment: Act Local Simulation" >> review_report.md
+          echo "- Working Directory: $(pwd)" >> review_report.md
+          echo "- Script Path: $SCRIPT_PATH" >> review_report.md
+          echo "- Python Version: $(python --version)" >> review_report.md
           echo "" >> review_report.md
           
-          # 處理每個變更的文件
+          # Process each changed file
           while IFS= read -r file; do
             if [[ "$file" =~ tests/.*_test\.py$ ]] || [[ "$file" =~ tests/.*/test_.*\.py$ ]] || [[ "$file" =~ .*_test\.py$ ]] || [[ "$file" =~ .*/test_.*\.py$ ]]; then
               echo "Reviewing: $file"
           
-              # 獲取文件變更（使用多種回退機制）
+              # Get file changes (using multiple fallback mechanisms)
               echo "Getting changes for $file"
               if git diff --unified=3 master..HEAD -- "$file" > .act_temp/temp_diff.txt 2>/dev/null; then
                 changes=$(cat .act_temp/temp_diff.txt)
@@ -148,13 +149,13 @@ jobs:
               echo "" >> review_report.md
           
               if [[ -n "$changes" && "$changes" != "No changes found"* ]]; then
-                # 使用完整路徑調用 AI 審查
+                # Call AI review with full path
                 echo "Running review with script: $SCRIPT_PATH"
           
-                # 保存變更到臨時文件以避免命令行過長問題
+                # Save changes to temporary file to avoid command line length issues
                 echo "$changes" > .act_temp/current_changes.txt
           
-                # 用環境變數調用 AI 審查，捕獲輸出和錯誤
+                # Call AI review with environment variables, capture output and errors
                 if AI_TOKEN="$AI_TOKEN" AI_COOKIES="$AI_COOKIES" python "$SCRIPT_PATH" "$file" "$(cat .act_temp/current_changes.txt)" --prompt prompt.md > .act_temp/review_output.txt 2> .act_temp/review_error.txt; then
                   cat .act_temp/review_output.txt >> review_report.md
                   echo "Review completed successfully"
@@ -175,18 +176,18 @@ jobs:
             fi
           done < .act_temp/changed_files.txt
           
-          # 如果沒有添加任何審查
+          # If no reviews were added
           if ! grep -q "## 📝" review_report.md; then
             echo "No test files found for review or all reviews failed." >> review_report.md
           fi
           
-          # 保存報告以供後續步驟使用
+          # Save report for subsequent steps
           cp review_report.md .act_temp/reports/
           echo "Review report saved to review_report.md"
           cat review_report.md
 
-      # 此步驟在 Act 中可能無法正常工作，因為它依賴於 GitHub API
-      # 但我們保留它用於實際的 GitHub Actions 執行
+      # This step may not work properly in Act because it depends on the GitHub API
+      # But we keep it for actual GitHub Actions execution
       - name: Comment on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
@@ -195,10 +196,10 @@ jobs:
             const fs = require('fs');
             
             try {
-              // 讀取審查報告
+              // Read review report
               const reviewReport = fs.readFileSync('review_report.md', 'utf8');
             
-              // 檢查是否已經有機器人評論
+              // Check if there's already a bot comment
               const { data: comments } = await github.rest.issues.listComments({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -211,7 +212,7 @@ jobs:
               );
             
               if (botComment) {
-                // 更新現有評論
+                // Update existing comment
                 await github.rest.issues.updateComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -220,7 +221,7 @@ jobs:
                 });
                 console.log(`Updated existing comment ID ${botComment.id}`);
               } else {
-                // 創建新評論
+                // Create new comment
                 await github.rest.issues.createComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
