@@ -31,6 +31,27 @@ jobs:
         run: |
           pip install requests urllib3
 
+      - name: Verify ai_prompt.md exists
+        run: |
+          echo "Looking for prompt file"
+          if [ -f "$AI_PROMPT_PATH" ]; then
+            echo "ai_prompt.md file found at $AI_PROMPT_PATH"
+            head -n 5 "$AI_PROMPT_PATH"
+          else
+            echo "ai_prompt.md file not found at specified path"
+            echo "Searching for ai_prompt.md in the repository..."
+            find . -name "ai_prompt.md" -type f
+            FOUND_PATH=$(find . -name "ai_prompt.md" -type f | head -n 1)
+            if [ -n "$FOUND_PATH" ]; then
+              echo "Found prompt file at: $FOUND_PATH"
+              echo "AI_PROMPT_PATH=$(pwd)/$FOUND_PATH" >> $GITHUB_ENV
+              echo "AI_PROMPT_PATH updated to: $(pwd)/$FOUND_PATH"
+            else
+              echo "Error: Could not find ai_prompt.md anywhere in the repository"
+              exit 1  # 如果找不到文件則失敗
+            fi
+          fi
+
       - name: Verify script path and make executable
         run: |
           # First check for script in scripts directory
@@ -156,7 +177,7 @@ jobs:
                 echo "$changes" > .act_temp/current_changes.txt
           
                 # Call AI review with environment variables, capture output and errors
-                if AI_TOKEN="$AI_TOKEN" AI_COOKIES="$AI_COOKIES" python "$SCRIPT_PATH" "$file" "$(cat .act_temp/current_changes.txt)" --prompt prompt.md > .act_temp/review_output.txt 2> .act_temp/review_error.txt; then
+                if AI_TOKEN="$AI_TOKEN" AI_COOKIES="$AI_COOKIES" python "$SCRIPT_PATH" "$file" "$(cat .act_temp/current_changes.txt)" --prompt $AI_PROMPT > .act_temp/review_output.txt 2> .act_temp/review_error.txt; then
                   cat .act_temp/review_output.txt >> review_report.md
                   echo "Review completed successfully"
                 else
