@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-AI Code Reviewer Script
-Standalone script for AI-powered code review
-Supports reading authentication info from environment variables
+AI Code Reviewer Script - Enhanced with Custom Prompt Support
+Standalone script for AI-powered code review with customizable prompts
 """
 
 import requests
@@ -12,101 +11,111 @@ import json
 import sys
 import os
 import argparse
-from typing import Optional
+import string
+import random
 
 # Disable SSL warnings for unverified HTTPS requests
 urllib3.disable_warnings()
 
-
 class AICodeReviewer:
-    """AI Code Reviewer"""
+    """AI Code Reviewer with Custom Prompt Support"""
 
-    def __init__(self, token: str, cookies: Optional[str] = None):
+    def __init__(self, token: str, cookies: str):
         """
         Initialize the reviewer
 
         Args:
             token (str): AI service authentication token
-            cookies (str, optional): AI service cookies
+            cookies (str): AI service cookies (required)
         """
         self.token = token
         self.cookies = cookies
         self.api_url = "https://nschat.netskope.io/api/chat/completions"
         self.model = "ollama.deepseek-r1:latest"
 
+    def _generate_session_id(self) -> str:
+        """Generate session ID"""
+        chars = string.ascii_letters + string.digits
+        return ''.join(random.choice(chars) for _ in range(20))
+
     def _build_headers(self) -> dict:
-        """Build HTTP request headers"""
+        """Build HTTP request headers with proper browser simulation"""
         headers = {
-            "Authorization": f"Bearer {self.token}",
+            "Authorization": self.token,
+            "Cookie": self.cookies,
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (GitHub Actions Code Review Bot)",
-            "Accept": "text/event-stream",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json",
             "Cache-Control": "no-cache",
             "Origin": "https://nschat.netskope.io",
             "Referer": "https://nschat.netskope.io/chat"
         }
-
-        # Add cookies to headers if available
-        if self.cookies:
-            headers["Cookie"] = self.cookies
-
         return headers
 
-    def _load_custom_prompt(self, prompt_file: str = "prompt.md") -> Optional[str]:
+    def _load_prompt_from_file(self, prompt_file: str) -> str:
         """
-        Load custom prompt file
+        Load prompt template from file
 
         Args:
             prompt_file (str): Path to prompt file
 
         Returns:
-            Optional[str]: Prompt content, or None if file doesn't exist
+            str: Prompt template content
         """
         try:
-            if os.path.exists(prompt_file):
-                with open(prompt_file, 'r', encoding='utf-8') as f:
-                    content = f.read().strip()
-                    if content:
-                        print(f"✅ Loaded custom prompt file: {prompt_file}", file=sys.stderr)
-                        return content
-            return None
-        except Exception as e:
-            print(f"⚠️ Failed to load prompt file: {str(e)}", file=sys.stderr)
-            return None
+            with open(prompt_file, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
 
-    def _build_review_prompt(self, file_path: str, code_changes: str, custom_prompt: Optional[str] = None) -> str:
+            if not content:
+                print("⚠️ Warning: Prompt file is empty", file=sys.stderr)
+                return ""
+
+            print(f"✅ Loaded prompt from: {prompt_file}", file=sys.stderr)
+            return content
+
+        except FileNotFoundError:
+            print(f"❌ Error: Prompt file not found: {prompt_file}", file=sys.stderr)
+            return ""
+        except Exception as e:
+            print(f"❌ Error reading prompt file: {str(e)}", file=sys.stderr)
+            return ""
+
+    def _build_review_prompt(self, file_path: str, code_changes: str, custom_prompt: str = "") -> str:
         """
-        Build code review prompt
+        Build code review prompt with optional custom template
 
         Args:
-            file_path (str): File path
-            code_changes (str): Code changes
-            custom_prompt (str, optional): Custom prompt content
+            file_path (str): File path being reviewed
+            code_changes (str): Code changes content
+            custom_prompt (str): Custom prompt template (optional)
+
+        Returns:
+            str: Final prompt for AI review
         """
-        # Basic review context
-        base_context = f"""
+        if custom_prompt:
+            # Use custom prompt template
+            # Replace placeholders if they exist
+            prompt = custom_prompt
+
+            # Support common placeholders
+            prompt = prompt.replace("{FILE_PATH}", file_path)
+            prompt = prompt.replace("{CODE_CHANGES}", code_changes)
+
+            # If no placeholders, append file info to custom prompt
+            if "{FILE_PATH}" not in custom_prompt and "{CODE_CHANGES}" not in custom_prompt:
+                prompt += f"\n\nFile path: {file_path}\n\nCode changes:\n```diff\n{code_changes}\n```"
+
+            return prompt
+        else:
+            # Use default prompt template
+            default_prompt = f"""Please conduct a professional code review for the following code changes:
+
 File path: {file_path}
 
 Code changes:
 ```diff
 {code_changes}
 ```
-"""
-
-        # Use custom prompt if available, otherwise use default
-        if custom_prompt:
-            # Combine custom prompt with code changes
-            full_prompt = f"""{custom_prompt}
-
-{base_context}
-
-Please review this code change according to the above guidelines."""
-        else:
-            # Use default review prompt
-            full_prompt = f"""
-Please conduct a professional code review for the following code changes:
-
-{base_context}
 
 Please provide review feedback on the following aspects:
 1. **Code Quality and Best Practices** - Does it follow coding standards?
@@ -119,24 +128,31 @@ Please provide review feedback on the following aspects:
 Please respond in English with clear and readable formatting. If the code looks good, please provide a concise explanation and positive feedback.
 Please use Markdown format for your response with appropriate headings and lists for better readability."""
 
-        return full_prompt
+            return default_prompt
 
-    def review_code(self, file_path: str, code_changes: str, prompt_file: str = "prompt.md") -> str:
+    def review_code(self, file_path: str, code_changes: str, prompt_file: str = None, verbose: bool = False) -> str:
         """
-        Review code changes
+        Review code changes with optional custom prompt
 
         Args:
             file_path (str): File path
             code_changes (str): Code changes content
-            prompt_file (str): Custom prompt file path
+            prompt_file (str): Optional path to custom prompt file
+            verbose (bool): Show verbose debug information
 
         Returns:
             str: Review result
         """
         headers = self._build_headers()
 
-        # Load custom prompt
-        custom_prompt = self._load_custom_prompt(prompt_file)
+        # Load custom prompt if provided
+        custom_prompt = ""
+        if prompt_file:
+            custom_prompt = self._load_prompt_from_file(prompt_file)
+            if verbose and custom_prompt:
+                print(f"🔧 Using custom prompt (length: {len(custom_prompt)} chars)", file=sys.stderr)
+
+        # Build final prompt
         review_prompt = self._build_review_prompt(file_path, code_changes, custom_prompt)
 
         # Prepare request data
@@ -145,81 +161,86 @@ Please use Markdown format for your response with appropriate headings and lists
             "id": str(uuid.uuid4()),
             "model": self.model,
             "messages": [{"role": "user", "content": review_prompt}],
-            "session_id": str(uuid.uuid4())[:20],
-            "stream": True
+            "session_id": self._generate_session_id(),
+            "stream": False
         }
+
+        if verbose:
+            print(f"🔧 Headers: {json.dumps(headers, indent=2)}", file=sys.stderr)
+            print(f"🔧 Model: {data['model']}", file=sys.stderr)
+            print(f"🔧 Final prompt length: {len(review_prompt)} chars", file=sys.stderr)
 
         try:
             print(f"🔍 Reviewing file: {file_path}", file=sys.stderr)
+            if prompt_file:
+                print(f"📝 Using prompt file: {prompt_file}", file=sys.stderr)
 
-            # Send request
+            # Send request with SSL verification disabled
             response = requests.post(
                 self.api_url,
                 headers=headers,
                 json=data,
                 verify=False,
-                stream=True,
-                timeout=120  # Increase timeout
+                timeout=30
             )
 
+            if verbose:
+                print(f"🔧 Response status: {response.status_code}", file=sys.stderr)
+
             if response.status_code == 200:
-                return self._process_streaming_response(response)
+                return self._process_response(response, verbose)
             else:
                 error_msg = f"❌ API request failed: HTTP {response.status_code}"
                 if response.text:
-                    error_msg += f"\nResponse content: {response.text[:200]}..."
+                    error_msg += f"\nResponse content: {response.text[:500]}..."
+
+                if verbose:
+                    print(f"🔧 Full error response: {response.text}", file=sys.stderr)
+
                 return error_msg
 
         except requests.exceptions.Timeout:
             return "❌ Request timeout, please try again later"
-        except requests.exceptions.ConnectionError:
-            return "❌ Connection error, please check network or API endpoint"
+        except requests.exceptions.ConnectionError as e:
+            return f"❌ Connection error: {str(e)}\nPlease check network or API endpoint"
         except Exception as e:
             return f"❌ Error during review process: {str(e)}"
 
-    def _process_streaming_response(self, response) -> str:
-        """Process streaming response"""
-        full_content = ""
-
+    def _process_response(self, response, verbose: bool = False) -> str:
+        """Process normal HTTP response"""
         try:
-            for line in response.iter_lines(decode_unicode=True):
-                if line and line.startswith('data: '):
-                    data_content = line[6:]  # Remove 'data: ' prefix
+            response_data = response.json()
 
-                    # Check for end marker
-                    if data_content == '[DONE]':
-                        break
+            if verbose:
+                print(f"🔧 Response data keys: {list(response_data.keys())}", file=sys.stderr)
 
-                    try:
-                        # Parse JSON data
-                        chunk_data = json.loads(data_content)
+            # Extract content from response
+            if 'choices' in response_data and response_data['choices']:
+                message = response_data['choices'][0].get('message', {})
+                content = message.get('content', '')
 
-                        # Extract content
-                        if 'choices' in chunk_data and chunk_data['choices']:
-                            delta = chunk_data['choices'][0].get('delta', {})
-                            if 'content' in delta:
-                                content = delta['content']
-                                full_content += content
+                if verbose:
+                    print(f"🔧 Content length: {len(content)}", file=sys.stderr)
 
-                    except json.JSONDecodeError:
-                        # Skip invalid JSON
-                        continue
+                return content.strip() if content else "⚠️ AI did not respond with any content"
+            else:
+                return "⚠️ No valid response from AI service"
 
+        except json.JSONDecodeError as e:
+            return f"❌ Error parsing response JSON: {str(e)}"
         except Exception as e:
             return f"❌ Error processing response: {str(e)}"
-
-        return full_content.strip() if full_content else "⚠️ AI did not respond with any content"
 
 
 def main():
     """Main program entry point"""
-    parser = argparse.ArgumentParser(description='AI Code Review Tool')
+    parser = argparse.ArgumentParser(description='AI Code Review Tool with Custom Prompt Support')
     parser.add_argument('file_path', help='File path to review')
     parser.add_argument('code_changes', help='Code changes content')
-    parser.add_argument('--prompt-file', default='prompt.md', help='Custom prompt file path (default: prompt.md)')
     parser.add_argument('--token',
                         help='AI service authentication token (can also be set via AI_TOKEN environment variable)')
     parser.add_argument('--cookies', help='AI service cookies (can also be set via AI_COOKIES environment variable)')
+    parser.add_argument('--prompt', '-p', help='Path to custom prompt template file')
     parser.add_argument('--verbose', '-v', action='store_true', help='Show verbose information')
 
     args = parser.parse_args()
@@ -228,20 +249,27 @@ def main():
     token = args.token or os.getenv('AI_TOKEN')
     cookies = args.cookies or os.getenv('AI_COOKIES')
 
+    # Check required authentication info
     if not token:
         print("❌ Error: No AI service authentication token provided", file=sys.stderr)
         print("Please provide via --token parameter or AI_TOKEN environment variable", file=sys.stderr)
         sys.exit(1)
 
+    if not cookies:
+        print("❌ Error: No AI service cookies provided", file=sys.stderr)
+        print("Please provide via --cookies parameter or AI_COOKIES environment variable", file=sys.stderr)
+        sys.exit(1)
+
     if args.verbose:
         print(f"📁 File path: {args.file_path}", file=sys.stderr)
-        print(f"📄 Prompt file: {args.prompt_file}", file=sys.stderr)
         print(f"🔑 Token length: {len(token)} characters", file=sys.stderr)
-        print(f"🍪 Cookies: {'Provided' if cookies else 'Not provided'}", file=sys.stderr)
+        print(f"🍪 Cookies length: {len(cookies)} characters", file=sys.stderr)
+        if args.prompt:
+            print(f"📝 Custom prompt file: {args.prompt}", file=sys.stderr)
 
     # Create reviewer and execute review
     reviewer = AICodeReviewer(token, cookies)
-    result = reviewer.review_code(args.file_path, args.code_changes, args.prompt_file)
+    result = reviewer.review_code(args.file_path, args.code_changes, args.prompt, args.verbose)
 
     # Output result
     print(result)

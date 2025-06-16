@@ -1,194 +1,234 @@
-# AI Code Review Workflow
-# Uses AI chatbot to review code changes in PRs
-# and posts review results as PR comments
-
 name: AI Code Review
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
-    # Can limit to specific file types only
+    types: [ opened, synchronize, reopened ]
     paths:
-      - '**.py'
-      - '**.go'
-      - '**.js'
-      - '**.ts'
-      - '**.java'
-      - '**.cpp'
-      - '**.c'
-      - '**.h'
+      - 'tests/**/*_test.py'
+      - 'tests/**/test_*.py'
+      - '**/*_test.py'
+      - '**/test_*.py'
 
 jobs:
   code-review:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write  # Required for writing PR comments
+      pull-requests: write
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Get full history for comparing changes
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.12.9'
 
       - name: Install dependencies
-        env:
-          AI_TOKEN: ${{ secrets.AI_TOKEN }}
-          AI_COOKIES: ${{ secrets.AI_COOKIES }}
         run: |
           pip install requests urllib3
 
-      - name: Make review script executable
+      - name: Verify script path and make executable
         run: |
-          chmod +x scripts/ai_code_reviewer.py
-
-      - name: Check if prompt file exists
-        run: |
-          if [[ -f "prompt.md" ]]; then
-            echo "✅ Found custom prompt file: prompt.md"
-            echo "📄 Prompt file preview:"
-            head -n 5 prompt.md
-            echo "..."
+          # 首先檢查 scripts 目錄中的腳本
+          if [ -f "scripts/ai_code_reviewer.py" ]; then
+            chmod +x scripts/ai_code_reviewer.py
+            echo "Script found at scripts/ai_code_reviewer.py"
+            SCRIPT_PATH="scripts/ai_code_reviewer.py"
+          # 然後檢查根目錄中的腳本
+          elif [ -f "ai_code_reviewer.py" ]; then
+            chmod +x ai_code_reviewer.py
+            echo "Script found at ai_code_reviewer.py"
+            SCRIPT_PATH="ai_code_reviewer.py"
+          # 最後檢查其他可能的位置
           else
-            echo "ℹ️ No prompt.md file found, will use default review prompt"
+            SCRIPT_PATH=$(find . -name "ai_code_reviewer.py" | head -n 1)
+            if [ -n "$SCRIPT_PATH" ]; then
+              chmod +x "$SCRIPT_PATH"
+              echo "Script found at $SCRIPT_PATH"
+            else
+              echo "Error: ai_code_reviewer.py not found"
+              exit 1
+            fi
           fi
+          echo "SCRIPT_PATH=$SCRIPT_PATH" >> $GITHUB_ENV
+
+      - name: Debug environment
+        run: |
+          echo "Working directory: $(pwd)"
+          echo "Script path: $SCRIPT_PATH"
+          echo "Test files found:"
+          find . -name "*test*.py" -type f
+          echo "Files in current directory:"
+          ls -la
+          echo "Prompt file exists: $([ -f prompt.md ] && echo "Yes" || echo "No")"
+          echo "Python version: $(python --version)"
 
       - name: Get changed files
         id: changed-files
         run: |
-          # Get files changed in PR
-          git diff --name-only origin/${{ github.base_ref }}..HEAD > changed_files.txt
-          echo "Found changed files:"
-          cat changed_files.txt
+          # Act 環境中可能無法使用 git diff 命令，所以添加更強健的回退機制
+          mkdir -p .act_temp
+          
+          # 嘗試使用 git diff
+          if git diff --name-only master..HEAD > .act_temp/changed_files.txt 2>/dev/null; then
+            echo "Git diff successful"
+          # 嘗試使用 git diff 與其他可能的基準分支
+          elif git diff --name-only origin/master..HEAD > .act_temp/changed_files.txt 2>/dev/null; then
+            echo "Git diff with origin/master successful"
+          elif git diff --name-only main..HEAD > .act_temp/changed_files.txt 2>/dev/null; then
+            echo "Git diff with main successful"
+          elif git diff --name-only origin/main..HEAD > .act_temp/changed_files.txt 2>/dev/null; then
+            echo "Git diff with origin/main successful"
+          # 回退到列出所有測試文件
+          else
+            echo "Using fallback: listing all test files"
+            find . -name "*test*.py" -o -name "test_*.py" -type f > .act_temp/changed_files.txt
+          fi
+          
+          # 如果沒有找到任何文件，至少包含一個測試文件以便於測試
+          if [ ! -s .act_temp/changed_files.txt ]; then
+            echo "No files found, adding test_calculator.py as fallback"
+            echo "tests/test_calculator.py" > .act_temp/changed_files.txt
+          fi
+          
+          echo "Files to review:"
+          cat .act_temp/changed_files.txt
 
       - name: Review changed files
         id: review
         env:
+          # Act 使用 .env 或命令行設置的環境變數
+          # 如果您使用 -s 標誌提供了密鑰，它們應該可用
           AI_TOKEN: ${{ secrets.AI_TOKEN }}
           AI_COOKIES: ${{ secrets.AI_COOKIES }}
         run: |
+          # 創建輸出目錄
+          mkdir -p .act_temp/reports
+          
           echo "# 🤖 AI Code Review Report" > review_report.md
-          echo "" >> review_report.md
-          echo "**Review Time:** $(date '+%Y-%m-%d %H:%M:%S UTC')" >> review_report.md
-          echo "**PR:** #${{ github.event.number }}" >> review_report.md
+          echo "**Review Time:** $(date '+%Y-%m-%d %H:%M:%S')" >> review_report.md
           echo "" >> review_report.md
           
-          # Process each changed file
+          # 添加 Act 調試信息
+          echo "## 環境信息" >> review_report.md
+          echo "- 運行環境: Act 本地模擬" >> review_report.md
+          echo "- 工作目錄: $(pwd)" >> review_report.md
+          echo "- 腳本路徑: $SCRIPT_PATH" >> review_report.md
+          echo "- Python 版本: $(python --version)" >> review_report.md
+          echo "" >> review_report.md
+          
+          # 處理每個變更的文件
           while IFS= read -r file; do
-            # Only process code files
-            if [[ "$file" =~ \.(py|go|js|ts|java|cpp|c|h|rb|php|cs|swift|kt)$ ]]; then
-              echo "📂 Reviewing file: $file"
-              
-              # Get file changes
-              if git diff --unified=3 origin/${{ github.base_ref }}..HEAD -- "$file" > /dev/null 2>&1; then
-                changes=$(git diff --unified=3 origin/${{ github.base_ref }}..HEAD -- "$file")
-                
-                if [[ -n "$changes" ]]; then
-                  echo "" >> review_report.md
-                  echo "## 📝 \`$file\`" >> review_report.md
-                  echo "" >> review_report.md
-                  
-                  # Call AI review with prompt.md file
-                  review_result=$(python scripts/ai_code_reviewer.py "$file" "$changes" --prompt-file prompt.md 2>&1)
-                  
-                  if [[ $? -eq 0 ]] && [[ -n "$review_result" ]]; then
-                    echo "$review_result" >> review_report.md
-                  else
-                    echo "⚠️ Unable to complete review for this file" >> review_report.md
-                  fi
-                  
-                  echo "" >> review_report.md
-                  echo "---" >> review_report.md
-                fi
-              fi
-            fi
-          done < changed_files.txt
+            if [[ "$file" =~ tests/.*_test\.py$ ]] || [[ "$file" =~ tests/.*/test_.*\.py$ ]] || [[ "$file" =~ .*_test\.py$ ]] || [[ "$file" =~ .*/test_.*\.py$ ]]; then
+              echo "Reviewing: $file"
           
-          # If no reviewable files found
+              # 獲取文件變更（使用多種回退機制）
+              echo "Getting changes for $file"
+              if git diff --unified=3 master..HEAD -- "$file" > .act_temp/temp_diff.txt 2>/dev/null; then
+                changes=$(cat .act_temp/temp_diff.txt)
+                echo "Found changes via git diff master..HEAD"
+              elif git diff --unified=3 origin/master..HEAD -- "$file" > .act_temp/temp_diff.txt 2>/dev/null; then
+                changes=$(cat .act_temp/temp_diff.txt)
+                echo "Found changes via git diff origin/master..HEAD"
+              elif git diff --unified=3 main..HEAD -- "$file" > .act_temp/temp_diff.txt 2>/dev/null; then
+                changes=$(cat .act_temp/temp_diff.txt)
+                echo "Found changes via git diff main..HEAD"
+              elif [ -f "$file" ]; then
+                changes=$(cat "$file")
+                echo "Using entire file content as changes"
+              else
+                changes="No changes found or file does not exist: $file"
+                echo "$changes"
+              fi
+          
+              echo "## 📝 \`$file\`" >> review_report.md
+              echo "" >> review_report.md
+          
+              if [[ -n "$changes" && "$changes" != "No changes found"* ]]; then
+                # 使用完整路徑調用 AI 審查
+                echo "Running review with script: $SCRIPT_PATH"
+          
+                # 保存變更到臨時文件以避免命令行過長問題
+                echo "$changes" > .act_temp/current_changes.txt
+          
+                # 用環境變數調用 AI 審查，捕獲輸出和錯誤
+                if AI_TOKEN="$AI_TOKEN" AI_COOKIES="$AI_COOKIES" python "$SCRIPT_PATH" "$file" "$(cat .act_temp/current_changes.txt)" --prompt prompt.md > .act_temp/review_output.txt 2> .act_temp/review_error.txt; then
+                  cat .act_temp/review_output.txt >> review_report.md
+                  echo "Review completed successfully"
+                else
+                  echo "⚠️ Review failed with error:" >> review_report.md
+                  echo '```' >> review_report.md
+                  cat .act_temp/review_error.txt >> review_report.md
+                  cat .act_temp/review_output.txt >> review_report.md
+                  echo '```' >> review_report.md
+                  echo "Review failed - see error above"
+                fi
+              else
+                echo "No substantive changes found in this file." >> review_report.md
+              fi
+          
+              echo "" >> review_report.md
+              echo "---" >> review_report.md
+            fi
+          done < .act_temp/changed_files.txt
+          
+          # 如果沒有添加任何審查
           if ! grep -q "## 📝" review_report.md; then
-            echo "" >> review_report.md
-            echo "ℹ️ No reviewable code files found in this PR." >> review_report.md
+            echo "No test files found for review or all reviews failed." >> review_report.md
           fi
           
-          echo "Review report generated:"
+          # 保存報告以供後續步驟使用
+          cp review_report.md .act_temp/reports/
+          echo "Review report saved to review_report.md"
           cat review_report.md
 
+      # 此步驟在 Act 中可能無法正常工作，因為它依賴於 GitHub API
+      # 但我們保留它用於實際的 GitHub Actions 執行
       - name: Comment on PR
+        if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             
-            // Read review report
-            const reviewReport = fs.readFileSync('review_report.md', 'utf8');
+            try {
+              // 讀取審查報告
+              const reviewReport = fs.readFileSync('review_report.md', 'utf8');
             
-            // Check if there's already a bot comment
-            const comments = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-            
-            const botComment = comments.data.find(comment => 
-              comment.user.type === 'Bot' && 
-              comment.body.includes('🤖 AI Code Review Report')
-            );
-            
-            if (botComment) {
-              // Update existing comment
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: reviewReport
-              });
-              console.log('Updated existing review comment');
-            } else {
-              // Create new comment
-              await github.rest.issues.createComment({
+              // 檢查是否已經有機器人評論
+              const { data: comments } = await github.rest.issues.listComments({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                body: reviewReport
               });
-              console.log('Created new review comment');
+            
+              const botComment = comments.find(comment => 
+                comment.user.type === 'Bot' && 
+                comment.body.includes('AI Code Review Report')
+              );
+            
+              if (botComment) {
+                // 更新現有評論
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: botComment.id,
+                  body: reviewReport
+                });
+                console.log(`Updated existing comment ID ${botComment.id}`);
+              } else {
+                // 創建新評論
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: reviewReport
+                });
+                console.log('Created new comment');
+              }
+            } catch (error) {
+              console.error('Error posting comment:', error);
             }
-
-      - name: Upload review report
-        uses: actions/upload-artifact@v3
-        if: always()
-        with:
-          name: code-review-report
-          path: review_report.md
-          retention-days: 30
-
-# ==================== Setup Instructions ====================
-#
-# 🔧 Required Repository Secrets:
-# - AI_TOKEN: Your AI service authentication token
-# - AI_COOKIES: Your AI service cookies (if needed)
-#
-# 🎯 Features:
-# - ✅ Only triggers on PR events
-# - ✅ Only reviews code files (customizable file extensions)
-# - ✅ Gets specific file change content
-# - ✅ Uses AI for professional code review
-# - ✅ Posts results as PR comments
-# - ✅ Auto-updates existing comments (prevents spam)
-# - ✅ Saves review reports as artifacts
-#
-# 🚀 Usage:
-# 1. Create scripts/ai_code_reviewer.py script
-# 2. (Optional) Create prompt.md file to define review standards
-# 3. Save this file as .github/workflows/code-review.yml
-# 4. Set AI_TOKEN and AI_COOKIES in Repository Settings > Secrets
-# 5. Create PR to automatically trigger review
-#
-# ⚙️ Customization Options:
-# - Modify paths to limit triggering file types
-# - Adjust review prompt language and requirements
-# - Modify AI model or API endpoint
