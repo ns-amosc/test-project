@@ -3,6 +3,7 @@
 AI Code Reviewer Script - Enhanced with Custom Prompt Support
 Standalone script for AI-powered code review with customizable prompts
 """
+from xml.sax import default_parser_list
 
 import requests
 import urllib3
@@ -82,53 +83,44 @@ class AICodeReviewer:
 
     def _build_review_prompt(self, file_path: str, code_changes: str, custom_prompt: str = "") -> str:
         """
-        Build code review prompt with optional custom template
+        Build code review prompt with optional custom review criteria
 
         Args:
             file_path (str): File path being reviewed
             code_changes (str): Code changes content
-            custom_prompt (str): Custom prompt template (optional)
+            custom_prompt (str): Custom review criteria (optional)
 
         Returns:
             str: Final prompt for AI review
         """
-        if custom_prompt:
-            # Use custom prompt template
-            # Replace placeholders if they exist
-            prompt = custom_prompt
+        # Define the default review criteria
+        default_criteria = """
+    1. **Test Quality** - Are the tests comprehensive and do they cover important edge cases?
+    2. **Testing Best Practices** - Does it follow testing standards and best practices?
+    3. **Test Structure** - Is the test structure clear and maintainable?
+    4. **Potential Bugs or Issues** - Are there any logic errors or edge case problems?
+    5. **Test Assertions** - Are the assertions appropriate and sufficient?
+    6. **Specific Improvement Suggestions** - Provide clear modification recommendations
+    """
 
-            # Support common placeholders
-            prompt = prompt.replace("{FILE_PATH}", file_path)
-            prompt = prompt.replace("{CODE_CHANGES}", code_changes)
+        # Choose which criteria to use
+        review_criteria = custom_prompt if custom_prompt else default_criteria
 
-            # If no placeholders, append file info to custom prompt
-            if "{FILE_PATH}" not in custom_prompt and "{CODE_CHANGES}" not in custom_prompt:
-                prompt += f"\n\nFile path: {file_path}\n\nCode changes:\n```diff\n{code_changes}\n```"
+        # Build the final prompt
+        prompt = f"""Based on the following criteria:
+    {review_criteria}
 
-            return prompt
-        else:
-            # Use default prompt template
-            default_prompt = f"""Please conduct a professional code review for the following code changes:
+    Please conduct a professional code review for the following test code changes:
 
-File path: {file_path}
+    File path: {file_path}
 
-Code changes:
-```diff
-{code_changes}
-```
+    Code changes:
+    ```diff
+    {code_changes}
+    ```
+    """
 
-Please provide review feedback on the following aspects:
-1. **Code Quality and Best Practices** - Does it follow coding standards?
-2. **Potential Bugs or Issues** - Are there any logic errors or edge case problems?
-3. **Performance Considerations** - Are there any performance bottlenecks or optimization opportunities?
-4. **Security Issues** - Are there any security vulnerabilities or risks?
-5. **Maintainability Suggestions** - Is the code easy to understand and maintain?
-6. **Specific Improvement Suggestions** - Provide clear modification recommendations
-
-Please respond in English with clear and readable formatting. If the code looks good, please provide a concise explanation and positive feedback.
-Please use Markdown format for your response with appropriate headings and lists for better readability."""
-
-            return default_prompt
+        return prompt
 
     def review_code(self, file_path: str, code_changes: str, prompt_file: str = None, verbose: bool = False) -> str:
         """
