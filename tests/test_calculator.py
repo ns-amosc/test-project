@@ -1,11 +1,6 @@
 import unittest
-import sys
-import os
 
-# Add src directory to Python path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
-from main import add, subtract, multiply, divide
+from calculator.main import add, subtract, multiply, divide
 
 class TestCalculator(unittest.TestCase):
     """Test cases for calculator functions"""
