@@ -21,7 +21,7 @@ urllib3.disable_warnings()
 class AICodeReviewer:
     """AI Code Reviewer with Custom Prompt Support"""
 
-    def __init__(self, token: str, cookies: str):
+    def __init__(self, token: str, url: str):
         """
         Initialize the reviewer
 
@@ -30,8 +30,7 @@ class AICodeReviewer:
             cookies (str): AI service cookies (required)
         """
         self.token = token
-        self.cookies = cookies
-        self.api_url = "https://nschat.netskope.io/api/chat/completions"
+        self.api_url = url
         self.model = "ollama.deepseek-r1:latest"
 
     def _generate_session_id(self) -> str:
@@ -42,14 +41,8 @@ class AICodeReviewer:
     def _build_headers(self) -> dict:
         """Build HTTP request headers with proper browser simulation"""
         headers = {
-            "Authorization": self.token,
-            "Cookie": self.cookies,
+            "x-api-key": self.token,
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "application/json",
-            "Cache-Control": "no-cache",
-            "Origin": "https://nschat.netskope.io",
-            "Referer": "https://nschat.netskope.io/chat"
         }
         return headers
 
@@ -149,12 +142,9 @@ class AICodeReviewer:
 
         # Prepare request data
         data = {
-            "chat_id": str(uuid.uuid4()),
-            "id": str(uuid.uuid4()),
-            "model": self.model,
-            "messages": [{"role": "user", "content": review_prompt}],
-            "session_id": self._generate_session_id(),
-            "stream": False
+            "user_id": "developer",
+            "prompts": review_prompt,
+            "model": "ollama.deepseek-r1:latest"
         }
 
         if verbose:
@@ -172,7 +162,7 @@ class AICodeReviewer:
                 self.api_url,
                 headers=headers,
                 json=data,
-                verify=False,
+                verify=True,
                 timeout=30
             )
 
@@ -207,9 +197,8 @@ class AICodeReviewer:
                 print(f"🔧 Response data keys: {list(response_data.keys())}", file=sys.stderr)
 
             # Extract content from response
-            if 'choices' in response_data and response_data['choices']:
-                message = response_data['choices'][0].get('message', {})
-                content = message.get('content', '')
+            if 'response' in response_data and response_data['response']:
+                content = response_data['response']
 
                 if verbose:
                     print(f"🔧 Content length: {len(content)}", file=sys.stderr)
@@ -239,7 +228,7 @@ def main():
 
     # Get authentication info
     token = args.token or os.getenv('AI_TOKEN')
-    cookies = args.cookies or os.getenv('AI_COOKIES')
+    url = args.url or os.getenv('AI_URL')
 
     # Check required authentication info
     if not token:
@@ -255,12 +244,12 @@ def main():
     if args.verbose:
         print(f"📁 File path: {args.file_path}", file=sys.stderr)
         print(f"🔑 Token length: {len(token)} characters", file=sys.stderr)
-        print(f"🍪 Cookies length: {len(cookies)} characters", file=sys.stderr)
+        print(f"🍪 URL length: {len(url)} characters", file=sys.stderr)
         if args.prompt:
             print(f"📝 Custom prompt file: {args.prompt}", file=sys.stderr)
 
     # Create reviewer and execute review
-    reviewer = AICodeReviewer(token, cookies)
+    reviewer = AICodeReviewer(token, url)
     result = reviewer.review_code(args.file_path, args.code_changes, args.prompt, args.verbose)
 
     # Output result
