@@ -237,7 +237,7 @@ def main():
         print("Please provide via --token parameter or AI_TOKEN environment variable", file=sys.stderr)
         sys.exit(1)
 
-    if not args.url:
+    if not url:
         print("❌ Error: No URL provided", file=sys.stderr)
         print("Please provide via --url parameter or AI_URL environment variable", file=sys.stderr)
         sys.exit(1)
