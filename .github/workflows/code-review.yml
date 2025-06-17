@@ -137,7 +137,7 @@ jobs:
           
           # Add Act debug information
           echo "## Environment Information" >> review_report.md
-          echo "- Running Environment: Act Local Simulation" >> review_report.md
+          echo "- Running Environment: $([ "${ACT:-false}" = "true" ] && echo "Act Local Simulation" || echo "GitHub Actions")" >> review_report.md
           echo "- Working Directory: $(pwd)" >> review_report.md
           echo "- Script Path: $SCRIPT_PATH" >> review_report.md
           echo "- Python Version: $(python --version)" >> review_report.md
