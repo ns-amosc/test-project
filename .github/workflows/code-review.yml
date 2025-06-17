@@ -126,7 +126,7 @@ jobs:
           # Act uses environment variables set via .env or command line
           # If you provide keys using the -s flag, they should be available
           AI_TOKEN: ${{ secrets.AI_TOKEN }}
-          AI_COOKIES: ${{ secrets.AI_COOKIES }}
+          AI_URL: ${{ secrets.AI_URL }}
         run: |
           # Create output directory
           mkdir -p .act_temp/reports
@@ -179,7 +179,7 @@ jobs:
                 echo "$changes" > .act_temp/current_changes.txt
           
                 # Call AI review with environment variables, capture output and errors
-                if AI_TOKEN="$AI_TOKEN" AI_COOKIES="$AI_COOKIES" python "$SCRIPT_PATH" "$file" "$(cat .act_temp/current_changes.txt)" --prompt "$AI_PROMPT_PATH" > .act_temp/review_output.txt 2> .act_temp/review_error.txt; then
+                if AI_TOKEN="$AI_TOKEN" AI_URL="$AI_URL" python "$SCRIPT_PATH" "$file" "$(cat .act_temp/current_changes.txt)" --prompt "$AI_PROMPT_PATH" > .act_temp/review_output.txt 2> .act_temp/review_error.txt; then
                   cat .act_temp/review_output.txt >> review_report.md
                   echo "Review completed successfully"
                 else

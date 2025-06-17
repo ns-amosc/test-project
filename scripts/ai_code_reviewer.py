@@ -223,6 +223,7 @@ def main():
     parser.add_argument('--cookies', help='AI service cookies (can also be set via AI_COOKIES environment variable)')
     parser.add_argument('--prompt', '-p', help='Path to custom prompt template file')
     parser.add_argument('--verbose', '-v', action='store_true', help='Show verbose information')
+    parser.add_argument('--url', '-u', help='API URL endpoint')
 
     args = parser.parse_args()
 
@@ -236,9 +237,9 @@ def main():
         print("Please provide via --token parameter or AI_TOKEN environment variable", file=sys.stderr)
         sys.exit(1)
 
-    if not cookies:
-        print("❌ Error: No AI service cookies provided", file=sys.stderr)
-        print("Please provide via --cookies parameter or AI_COOKIES environment variable", file=sys.stderr)
+    if not args.url:
+        print("❌ Error: No URL provided", file=sys.stderr)
+        print("Please provide via --url parameter or AI_URL environment variable", file=sys.stderr)
         sys.exit(1)
 
     if args.verbose:
