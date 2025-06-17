@@ -243,5 +243,3 @@ def meets_grade_C_requirements(p, s, l, n):
 2. **Rationalized Grading Standards** - Adjusted required items based on actual needs
 3. **Clarified Determination Process** - Logical checks from low to high grades
 4. **Specific Improvement Suggestions** - Targeted upgrade guidance
-
-**Core Advantage**: AI can objectively evaluate Unit Test quality by checking specific items and provide practical improvement suggestions.
