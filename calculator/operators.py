@@ -4,6 +4,7 @@ Simple operator module
 Provides basic mathematical operations
 """
 
+
 class Operators:
     """Calculator class with basic mathematical operations"""
 

@@ -18,6 +18,7 @@ import random
 # Disable SSL warnings for unverified HTTPS requests
 urllib3.disable_warnings()
 
+
 class AICodeReviewer:
     """AI Code Reviewer with Custom Prompt Support"""
 
